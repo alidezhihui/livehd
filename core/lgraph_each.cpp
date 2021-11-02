@@ -1,6 +1,9 @@
 //  This file is distributed under the BSD 3-Clause License. See LICENSE for details.
 
+#include <atomic>
+
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "lgedgeiter.hpp"
 #include "lgraph.hpp"
 #include "mmap_map.hpp"
@@ -23,7 +26,7 @@ void Lgraph::each_sorted_graph_io(const std::function<void(Node_pin &pin, Port_I
   };
   std::vector<Pair_type> pin_pair;
 
-  auto hidx = hierarchical ? Hierarchy_tree::root_index() : Hierarchy_tree::invalid_index();
+  auto hidx = hierarchical ? Hierarchy::hierarchical_root() : Hierarchy::non_hierarchical();
 
   for (const auto &io_pin : get_self_sub_node().get_io_pins()) {
     if (io_pin.is_invalid())
@@ -112,7 +115,7 @@ void Lgraph::each_graph_input(const std::function<void(Node_pin &pin)>& f1, bool
   if (node_internal.size() < Hardcoded_output_nid)
     return;
 
-  auto hidx = hierarchical ? Hierarchy_tree::root_index() : Hierarchy_tree::invalid_index();
+  auto hidx = hierarchical ? Hierarchy::hierarchical_root() : Hierarchy::non_hierarchical();
 
   for (const auto &io_pin : get_self_sub_node().get_io_pins()) {
     if (io_pin.is_input()) {
@@ -131,7 +134,7 @@ void Lgraph::each_graph_output(const std::function<void(Node_pin &pin)>& f1, boo
   if (node_internal.size() < Hardcoded_output_nid)
     return;
 
-  auto hidx = hierarchical ? Hierarchy_tree::root_index() : Hierarchy_tree::invalid_index();
+  auto hidx = hierarchical ? Hierarchy::hierarchical_root() : Hierarchy::non_hierarchical();
 
   for (const auto &io_pin : get_self_sub_node().get_io_pins()) {
     if (io_pin.is_output()) {
@@ -159,6 +162,8 @@ void Lgraph::each_local_sub_fast_direct(const std::function<bool(Node &, Lg_type
   }
 }
 
+#if 0
+// deprecated: Use for(const auto node:lg->fast(true))
 void Lgraph::each_hier_fast(const std::function<bool(Node &)>& f) {
   const auto ht = ref_htree();
 
@@ -173,8 +178,10 @@ void Lgraph::each_hier_fast(const std::function<bool(Node &)>& f) {
     }
   }
 }
+#endif
 
 void Lgraph::each_local_unique_sub_fast(const std::function<bool(Lgraph *sub_lg)>& fn) {
+
   std::set<Lg_type_id> visited;
   for (auto e : get_down_nodes_map()) {
     Index_id cid = e.first.nid;
@@ -195,22 +202,17 @@ void Lgraph::each_local_unique_sub_fast(const std::function<bool(Lgraph *sub_lg)
 }
 
 void Lgraph::each_hier_unique_sub_bottom_up_int(std::set<Lg_type_id> &visited, const std::function<void(Lgraph *lg_sub)>& fn) {
-  for (auto e : get_down_nodes_map()) {
-    Index_id cid = e.first.nid;
-    I(cid);
 
-    if (visited.find(e.second) != visited.end())
+  for(const auto &ent:get_down_class_map()) {
+    if (visited.find(ent.first) != visited.end())
       continue;
+    visited.insert(ent.first);
 
-    Lgraph *lg = Lgraph::open(get_path(), e.second);
-    if (lg == nullptr)
+    auto *down_lg = Lgraph::open(get_path(), Lg_type_id(ent.first));
+    if (down_lg == nullptr)
       continue;
-
-    lg->each_hier_unique_sub_bottom_up_int(visited, fn);
-    if (visited.find(e.second) == visited.end()) {
-      visited.insert(e.second);
-      fn(lg);
-    }
+    down_lg->each_hier_unique_sub_bottom_up_int(visited, fn);
+    fn(down_lg);
   }
 }
 
@@ -219,83 +221,75 @@ void Lgraph::each_hier_unique_sub_bottom_up(const std::function<void(Lgraph *lg_
   each_hier_unique_sub_bottom_up_int(visited, fn);
 }
 
-void Lgraph::each_hier_unique_sub_bottom_up_parallel(const std::function<void(Lgraph *lg_sub)>& fn) {
-  std::unordered_map<uint32_t, int> visited;
+void Lgraph::bottom_up_visit_wrap(const std::function<void(Lgraph *lg_sub)> *fn
+                                 ,      Pending_map                         *pending_map
+                                 ,const Parent_map_type                     *parent_map) {
 
-  std::vector<Lgraph *> next_round;
+  (*fn)(this);
 
-  const auto &href = get_htree();
+  const auto it = parent_map->find(this);
+  if (it == parent_map->end())
+    return;
 
-  href.each_bottom_up_fast([this, &href, &visited, &next_round](const Hierarchy_index &hidx, const Hierarchy_data &data) {
-    auto it = visited.find(data.lgid);
-    if (it != visited.end())
-      return;
-    if (unlikely(hidx.is_root()))
-      return;
-
-    // I(href.is_leaf(hidx));  // Otherwise, it will be not visited
-    visited[data.lgid] = 0;
-
-    auto *lg = Lgraph::open(path, data.lgid);
-    if (lg != nullptr && !lg->is_empty())
-      next_round.emplace_back(lg);
-
-    auto index = href.get_parent(hidx);
-    int  level = 0;
-    while (!index.is_root()) {
-      const auto index_lgid = href.get_data(index).lgid;
-
-      const auto it2 = visited.find(index_lgid);
-      if (it2 == visited.end()) {
-        visited[index_lgid] = level;
-      } else {
-        if (it2->second > level) {
-          level = it2->second;
-        } else {
-          it2->second = level;
-        }
-      }
-      index = href.get_parent(index);
-      level = level + 1;
-    }
-  });
-
-  for (auto *lg : next_round) {
+  for(auto *parent_lg:it->second) {
+    auto it2 = pending_map->find(parent_lg);
+    I(it2 != pending_map->end());
+    // WARNING: NASTY cast to atomic because map does not allow to have an atomic as 2nd entry
+    int n_pending = atomic_fetch_sub_explicit((std::atomic<int> *)(&it2->second), 1, std::memory_order_relaxed);
+    if (n_pending==1) {
+      I(it2->second==0);
 #ifdef NO_BOTTOM_UP_PARALLEL
-    fn(lg);
+      parent_lg->bottom_up_visit_wrap(fn, pending_map, parent_map);
 #else
-    thread_pool.add(fn, lg);
-#endif
-    visited.erase(lg->get_lgid());
-  }
-  if (!next_round.empty())
-    thread_pool.wait_all();
-
-  int level = 0;
-  while (!visited.empty()) {
-    next_round.clear();
-    auto it = visited.begin();
-    while (it != visited.end()) {
-      if (it->second > level) {
-        ++it;
-        continue;
-      }
-      I(level == it->second);
-
-      auto *lg = Lgraph::open(path, Lg_type_id(it->first));
-      if (lg != nullptr && !lg->is_empty())
-        next_round.emplace_back(lg);
-      it = visited.erase(it);
-    }
-    ++level;
-    for (auto *lg : next_round) {
-#ifdef NO_BOTTOM_UP_PARALLEL
-      fn(lg);
-#else
-      thread_pool.add(fn, lg);
+      thread_pool.add(&Lgraph::bottom_up_visit_wrap, parent_lg, fn, pending_map, parent_map);
 #endif
     }
-    if (!next_round.empty())
-      thread_pool.wait_all();
   }
 }
+
+void Lgraph::bottom_up_visit_step(Pending_map                    &pending_map
+                                 ,Parent_map_type                &parent_map
+                                 ,absl::flat_hash_set<Lgraph *>  &leafs_set
+                                 ,std::vector<Lgraph *>          &leafs) {
+
+  bool leaf = true;
+  for(const auto &ent:get_down_class_map()) {
+    auto *down_lg = Lgraph::open(get_path(), Lg_type_id(ent.first));
+    if (down_lg != nullptr && !down_lg->is_empty()) {
+      leaf = false;
+      parent_map[down_lg].emplace_back(this);
+      pending_map[this]++;
+      down_lg->bottom_up_visit_step(pending_map, parent_map, leafs_set, leafs);
+    }
+  }
+
+  if (leaf) {
+    auto it = leafs_set.insert(this);
+    if (it.second) {
+      leafs.emplace_back(this);
+    }
+  }
+}
+
+void Lgraph::each_hier_unique_sub_bottom_up_parallel2(const std::function<void(Lgraph *lg_sub)>& fn) {
+
+  Pending_map     pending_map;
+  Parent_map_type parent_map;
+
+  absl::flat_hash_set<Lgraph *>  leafs_set;
+  std::vector<Lgraph *>          leafs;
+
+  bottom_up_visit_step(pending_map, parent_map, leafs_set, leafs); // single-thread
+
+  if (!leafs.empty()) {
+    for(auto *lg:leafs) {
+#ifdef NO_BOTTOM_UP_PARALLEL
+      lg->bottom_up_visit_wrap(&fn, &pending_map, &parent_map);
+#else
+      thread_pool.add(&Lgraph::bottom_up_visit_wrap, lg, &fn, &pending_map, &parent_map);
+#endif
+    }
+    thread_pool.wait_all();
+  }
+}
+

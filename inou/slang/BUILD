@@ -14,8 +14,8 @@ cc_library(
     includes = ["."],
     visibility = ["//visibility:public"],
     deps = [
+        "@slang",   # Must be before pass because both have FMT and pass has priority (or slang fails)
         "//pass/common:pass",
-        "@slang",
     ],
     alwayslink = True,  # Needed to have constructor called
 )
@@ -30,10 +30,19 @@ cc_binary(
 )
 
 cc_binary(
-    name = "driver",
-    srcs = ["tests/driver.cpp"],
+    name = "slang",
+    srcs = ["tests/slang.cpp"],
     copts = COPTS,
     deps = [
         ":inou_slang",
+    ],
+)
+
+sh_test(
+    name = "slang_test.sh",
+    srcs = ["tests/slang_test.sh"],
+    data = [
+        "//inou/yosys/tests:verilog_tests",
+        "slang"
     ],
 )

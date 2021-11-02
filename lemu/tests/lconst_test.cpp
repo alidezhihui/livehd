@@ -1221,12 +1221,12 @@ TEST_F(Lconst_test, binary) {
   EXPECT_TRUE(a.eq_op(b).is_known_true());
   EXPECT_TRUE(a.eq_op(b2).is_known_true());
 
-  EXPECT_EQ(c.to_verilog(), "6'b1?10?1");
+  EXPECT_EQ(c.to_verilog(), "7'sb01?10?1");
   EXPECT_EQ(c.to_pyrope(), "0b001?_10?1");
 
   auto d = Lconst::from_pyrope("0b____1_1x1_");
   EXPECT_EQ(d.to_pyrope(), "0b0000_11?1");
-  EXPECT_EQ(d.to_verilog(), "4'b11?1");
+  EXPECT_EQ(d.to_verilog(), "5'sb011?1");
   EXPECT_EQ(d.to_binary(), "011?1");
 
   auto e = Lconst::from_pyrope("_-__0b1_");
@@ -1239,12 +1239,12 @@ TEST_F(Lconst_test, binary) {
 
   auto f = Lconst::from_pyrope("0b1_0100");
   EXPECT_EQ(f.to_pyrope(), "20");
-  EXPECT_EQ(f.to_verilog(), "5'h14");  // 6'sh14 would be fine too
+  EXPECT_EQ(f.to_verilog(), "6'sh14");
   EXPECT_EQ(f.to_binary(), "010100");
 
   Lconst g = Lconst::from_pyrope("0bxxxx_xxxx_");
   EXPECT_EQ(g.to_pyrope(), "0b0000_????_????");
-  EXPECT_EQ(g.to_verilog(), "8'b????????");
+  EXPECT_EQ(g.to_verilog(), "9'sb0????????");
   EXPECT_EQ(g.to_binary(), "0????????");
   Lconst h = Lconst::from_pyrope("0b0??___???_??___?");
   EXPECT_EQ(h, g);
@@ -1256,12 +1256,12 @@ TEST_F(Lconst_test, binary) {
 
   EXPECT_EQ(g2, Lconst::from_pyrope("0b0_0_0_0_0_0_0__???__????"));  // positive, add zeroes at will
   EXPECT_EQ(g2.to_pyrope(), "0b0???_????");
-  EXPECT_EQ(g2.to_verilog() ,"7'b???????");
+  EXPECT_EQ(g2.to_verilog() ,"8'sb0???????");
   EXPECT_EQ(g2.to_binary()   , "0???????");  // 0 as MSB because it is a positive number
 
   Lconst g3 = Lconst::from_pyrope("0sb0xxx_xxxx_");
   EXPECT_EQ(g3.to_pyrope() , "0b0???_????");
-  EXPECT_EQ(g3.to_verilog(),  "7'b???????");
+  EXPECT_EQ(g3.to_verilog(),  "8'sb0???????");
   EXPECT_EQ(g3.to_binary()     , "0???????");
 
   Lconst g4 = Lconst::from_pyrope("0sb11111xxxx_xxxx_");
@@ -1280,14 +1280,14 @@ TEST_F(Lconst_test, binary) {
   {
     Lconst k = Lconst::from_pyrope("17");
     EXPECT_EQ(k.to_pyrope(), "17");
-    EXPECT_EQ(k.to_verilog(), "5'h11");
+    EXPECT_EQ(k.to_verilog(), "6'sh11");
     EXPECT_EQ(k.to_binary(), "010001");
   }
 
   {
     Lconst k = Lconst::from_pyrope("255");
     EXPECT_EQ(k.to_pyrope(), "0xff");
-    EXPECT_EQ(k.to_verilog(), "8'hff");
+    EXPECT_EQ(k.to_verilog(), "9'shff");
     EXPECT_EQ(k.to_binary(), "011111111");
   }
 
@@ -1523,6 +1523,11 @@ TEST_F(Lconst_test, lconst_get_bits) {
   auto v3 = Lconst::from_pyrope("41");
   EXPECT_EQ(v1, v2);
   EXPECT_EQ(v2, v3);
+  auto v4 = Lconst::from_pyrope("-23").get_mask_op(Lconst::from_pyrope("0xFFF"));
+  EXPECT_EQ(v4, Lconst::from_pyrope("0xfe9"));
+  EXPECT_EQ(Lconst(-2).get_mask_op(Lconst(0xF)), Lconst::from_pyrope("0xe"));
+  EXPECT_EQ(Lconst(-2).get_mask_op(Lconst(0xFF)), Lconst::from_pyrope("0xFe"));
+  EXPECT_EQ(Lconst(-2).get_mask_op(Lconst(0xF0F)), Lconst::from_pyrope("0xFe"));
 
   EXPECT_EQ(Lconst::from_pyrope("0b0?0").get_mask_op(Lconst::from_pyrope("1")), Lconst::from_pyrope("0"));
 
@@ -1621,11 +1626,15 @@ TEST_F(Lconst_test, lconst_sign) {
   }
 
   {
+    EXPECT_EQ(Lconst::from_pyrope(-123), Lconst::from_pyrope("0sb1111110000101"));
+    //"0sb1111110000101"
+    //"0sb00000000??0??"
     auto pos1 = Lconst(-123).and_op(Lconst::from_pyrope("0b??0??"));
 
     EXPECT_TRUE(!pos1.is_negative());
     auto zero = pos1.rsh_op(2).and_op(1);
-    EXPECT_EQ(zero, Lconst(0));
+    fmt::print("zero:{}\n",zero.to_pyrope());
+    EXPECT_EQ(zero, Lconst::from_pyrope("0b?"));
   }
 
   {
@@ -1742,3 +1751,11 @@ TEST_F(Lconst_test, get_set_mask_equivalence) {
 #endif
 }
 
+TEST_F(Lconst_test, debug_console) {
+  auto a = UInt<130>("0x1FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"); // 129 ones
+  auto b = UInt<130>("0x100000000000000000000000000000001"); // 1, 127 zeroes, 1 one
+
+  auto res = a+b;
+  
+  std::cout << res << "\n";
+}

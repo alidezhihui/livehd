@@ -1,13 +1,16 @@
 #!/bin/bash
-mv -f lbench.trace lbench.trace.old
-
-if [ ! -d ./livehd_regression ]; then
-  git clone git@github.com:masc-ucsc/livehd_regression.git
-
-  cd livehd_regression/synthetic
-  ./setup.sh
-  cd ../../
+if [ -f "./lbench.trace" ]; then
+  mv -f lbench.trace lbench.trace.old
 fi
+
+# if [ ! -d ./livehd_regression ]; then
+#   git clone git@github.com:masc-ucsc/livehd_regression.git
+
+#   cd livehd_regression/synthetic
+#   # run the full chisel compilation flow
+#   ./setup.sh
+#   cd ../../
+# fi
 
 FIRRTL_LEVEL='ch'
 LGSHELL=./bazel-bin/main/lgshell
@@ -17,11 +20,13 @@ PATTERN_PATH=./livehd_regression/synthetic/generated
 FIRRTL_EXE=./livehd_regression/tools/firrtl/utils/bin/firrtl
 
 if [ "${PWD##/home/}" != "${PWD}" ]; then
-  LGDB=./lgdb
+  # LGDB=./lgdb
+  LGDB=/local/scrap/masc/swang203/lgdb
 else
-  LGDB=/local/scrap/masc/swang203/lgdb   # NSF
+  LGDB=${MADA_SCRAP}/lgdb   # NSF
 fi
 
+# LGDB=/local/scrap/masc/swang203/lgdb
 GVIZ='false'
 
 
@@ -38,7 +43,7 @@ fi
 unsorted=''
 for filename in ./livehd_regression/synthetic/generated/*.${FIRRTL_LEVEL}.pb
 do
-  pt=$(basename "$filename" .${FIRRTL_LEVEL}.pb) # ./foo/bar.scala -> bar 
+  pt=$(basename "$filename" .${FIRRTL_LEVEL}.pb) # ./foo/bar.scala -> bar
   unsorted+="$pt "
 done
 
@@ -46,41 +51,32 @@ done
 pts=$(echo $unsorted | tr " " "\n" | sort -V)
 
 
-
-
-pts='Snxn100k'
+pts='Snxn100k Snxn200k Snxn300k Snxn400k Snxn500k Snxn600k Snxn700k Snxn800k Snxn900k Snxn1000k'
+pts='Snxn1000k'
 echo -e "All Benchmark Patterns:" '\n'$pts
 
 
 fucntion() {
-  echo "-------------------- LiveHD  (${FIRRTL_LEVEL}.pb -> Verilog(Cgen)) -----" > stat.livehd
-  echo "-------------------- LiveHD  (${FIRRTL_LEVEL}.pb -> Verilog(Yosys)) ----" > stat.livehd-yosys
-  echo "-------------------- FIRRTL  (Chirrtl -> Verilog) ---------"              > stat.fir2verilog
 
   for pt in $1
   do
+    echo "-------------------- LiveHD  $pt Compilation with $2 Threads -----" >> stat.livehd
     rm -rf $LGDB
-    echo ""
-    echo ""
-    echo ""
-    echo "======================================================================"
-    echo "                     LiveHD ${FIRRTL_LEVEL}.pb Full Compilation: ${pt}.pb"
-    echo "======================================================================"
+    # echo ""
+    # echo ""
+    # echo ""
+    # echo "======================================================================"
+    # echo "                     LiveHD Full Compilation: ${pt}.${FIRRTL_LEVEL}.pb"
+    # echo "======================================================================"
     # livehd compilation
     if [ ! -f ${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb ]; then
         echo "ERROR: could not find ${pt}.${FIRRTL_LEVEL}.pb in ${PATTERN_PATH}"
         exit 1
-    fi 
+    fi
+    # perf record --call-graph fp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true |> inou.cgen.verilog"
 
-    # perf record --call-graph fp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true |> inou.cgen.verilog" 
-
-    # perf stat -o pp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true |> inou.cgen.verilog"
-    # GVIZ='true'
-    perf stat -o pp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true"
-
-    # perf stat -o pp-yosys ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb 
-    #                             |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true 
-    #                             |> inou.yosys.fromlg hier:true" 
+    # perf stat -o pp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true"
+    perf stat -o pp ${LGSHELL} "inou.firrtl.tolnast path:${LGDB} files:${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb |> pass.compiler gviz:${GVIZ} top:${pt} firrtl:true |> lgraph.open path:${LGDB} name:${pt} hier:true |> inou.cgen.verilog odir:${LGDB}/gen_verilog"
 
     ret_val=$?
     if [ $ret_val -ne 0 ]; then
@@ -88,49 +84,43 @@ fucntion() {
       exit $ret_val
     fi
 
+    grep elapsed pp >> stat.livehd
+    cp pp perf.livehd
 
-    # echo ""
-    # echo ""
-    # echo ""
-    # echo "======================================================================"
-    # echo "                     FIRRTL Compilation from Chirrtl: ${pt}.fir"
-    # echo "======================================================================"
+  # # Verilog code generation
+    # perf stat -o pp ${LGSHELL} "lgraph.open path:${LGDB} name:${pt} hier:true |> inou.cgen.verilog odir:tmp_firrtl"
+    # grep elapsed pp >> stat.livehd
 
-    # # firrtl compilation
-    # if [ ! -f ${PATTERN_PATH}/${pt}.fir ]; then
-    #   echo "ERROR: could not find ${pt}.fir in ${PATTERN_PATH}"
-    #   exit 1
+    # ret_val=$?
+    # if [ $ret_val -eq 0 ] && [ -f "tmp_firrtl/${pt}.v" ]; then
+    #     echo "Successfully generate Verilog: tmp_firrtl/top_${pt}.v"
+    #     rm -f  yosys_script.*
     # else
-    #   # echo $pt
-    #   # perf stat -o pp2 $FIRRTL_EXE -i   ${PATTERN_PATH}/${pt}.fir -X verilog
-
-    #   mv perf.data perf.data.${pt}
-    #   mv perf.data.old perf.data.old.${pt}
-    #   echo "      ${pt}"    >> stat.livehd
-      grep elapsed pp       >> stat.livehd
-    #   echo "      ${pt}"    >> stat.livehd-yosys
-    #   grep elapsed pp-yosys >> stat.livehd-yosys
-    #   echo "      ${pt}"    >> stat.fir2verilog
-    #   grep elapsed pp2      >> stat.fir2verilog
+    #     echo "ERROR: Firrtl compiler failed: verilog generation, testcase: ${PATTERN_PATH}/${pt}.${FIRRTL_LEVEL}.pb"
+    #     exit $ret_val
     # fi
-    
-    # note: Chisel->ch.pb is recorded during synthetic pattern generation
+
   done #end of for
 
-
-  # cat stat.chisel3-full >  stat.summary
-  # cat stat.chisel3-pb   >> stat.summary
-  # cat stat.livehd-yosys >> stat.summary
-  # cat stat.livehd       >> stat.summary
-  # cat stat.fir2verilog  >> stat.summary
-  # cat stat.chisel3-fir  >> stat.summary
-  # cat stat.summary
-  cat stat.livehd
 
   # rm -f *.dot
   # rm -f *.v
   rm -f ./*.tcl
-  rm -f pp*
+  rm -f pp
 }
 
-fucntion "$pts"
+
+
+echo "-------------------- Benchmark Start -----" > stat.livehd
+# for thds in 2 3 4 8 16 32
+# note: for single thread, you have to disable thread pool directly
+# for thds in 1
+# set up $1 from the command line, ex: ./bench_fir.sh '1 2 3 4 8 16'
+for thds in $1
+do
+  export LIVEHD_THREADS=$thds
+  fucntion "$pts" "$thds"
+done
+
+
+

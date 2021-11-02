@@ -10,35 +10,35 @@ class Lnast_map {
 protected:
   constexpr static std::array namemap_pyrope{"invalid",
 
-                                             "top",       "sts",        "if",       "uif",     "for", "while", "phi",
-                                             "hotphi",    "func_call",  "func_def",
+                                             "top",       "sts",        "if",       "uif",     "for", "while",
+                                             "func_call",  "func_def",
 
                                              "=",         ":=",         "mut",
 
                                              "&",         "|",          "~",        "^",
 
-                                             "and",       "or",         "!",
+                                             "ror",
 
-                                             "ror",       "rxor",
+                                             "and",       "or",         "!",
 
                                              "+",         "-",          "*",        "/",       "mod",
 
-                                             "<<",        ">>",         ">>>",
+                                             "<<",        ">>",
 
-                                             "sext",      "set_mask",   "get_mask",
+                                             "sext",      "set_mask",   "get_mask", "mask_and", "mask_popcount", "mask_xor",
 
                                              "is",        "!=",         "==",       "<",       "<=",  ">",     ">=",
 
-                                             "()",
-                                             "++",      //"tuple_concat", // ++
-                                             "--",      //"tuple_delete", // --
-                                             "select",  // []
 
                                              "ref",       "const",
 
-                                             "assert",    "error_flag",
 
-                                             "tuple_add", "tuple_get",  "attr_set", "attr_get"};
+                                             "++",        "tuple_add", "tuple_get", "tuple_set",
+
+                                             "attr_set", "attr_get",
+
+                                             "error_flag", "phi", "hot_phi"
+  };
 
   constexpr static std::array namemap_verilog{
       "invalid",
@@ -48,8 +48,6 @@ protected:
       "uif",
       "for",
       "while",
-      "phi",
-      "hotphi",
       "func_call",
       "func_def",
 
@@ -62,12 +60,11 @@ protected:
       "~",
       "^",
 
+      "ror",
+
       "and",
       "or",
       "not",
-
-      "ror",
-      "rxor",
 
       "+",
       "-",
@@ -76,12 +73,14 @@ protected:
       "%",
 
       "<<",
-      ">>",
       ">>>",
 
       "sext",
       "set_mask",
       "get_mask",
+      "mask_and",
+      "mask_popcount",
+      "mask_xor",
 
       "is",
       "!=",
@@ -91,21 +90,20 @@ protected:
       ">",
       ">=",
 
-      "()",
-      "tuple_concat",
-      "tuple_delete",
-      "select",  // []
-
       "ref",
       "const",
 
-      "assert",
-      "error_flag",
-
+      "tuple_concat",
       "tuple_add",
       "tuple_get",
+      "tuple_set",
+
       "attr_set",
       "attr_get",
+
+      "error_flag",
+      "phi",
+      "hotphi",
   };
 
   constexpr static std::array namemap_cpp{
@@ -117,8 +115,6 @@ protected:
       "uif",
       "for",
       "while",
-      "phi",
-      "hotphi",
       "func_call",
       "func_def",
 
@@ -131,12 +127,11 @@ protected:
       "~",  // not
       "^",  // not
 
+      "ror",
+
       "&&",  // logical_and
       "||",  // logical_or
       "!",   // logical_not
-
-      "ror",
-      "rxor",
 
       "+",
       "-",
@@ -145,12 +140,14 @@ protected:
       "%",
 
       "<<",
-      ">>",
       ">>>",
 
       "sext",
       "set_mask",
       "get_mask",
+      "mask_and",
+      "mask_popcount",
+      "mask_xor",
 
       "is",
       "!=",
@@ -160,21 +157,20 @@ protected:
       ">",
       ">=",
 
-      "()",
-      "tuple_concat",  // ++
-      "tuple_delete",  // --
-      "selc",          // []
-
       "ref",
       "const",
 
-      "assert",
-      "error_flag",
-
+      "tuple_concat",  // ++
       "tuple_add",
       "tuple_get",
+      "tuple_set",
+
       "attr_set",
       "attr_get",
+
+      "error_flag",
+      "phi",
+      "hotphi",
   };
 
 public:

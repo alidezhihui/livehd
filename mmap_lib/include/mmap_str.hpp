@@ -218,11 +218,17 @@ protected:
     std::string name;
     Table       key2sv_vector;
     Table       map_vector;
+    std::mutex  pool_mutex;
 
     absl::flat_hash_map<std::string, uint32_t> map;
 
     uint32_t add_new_sv(std::string_view sv) {
-      assert(map.find(sv) == map.end());
+      std::lock_guard<std::mutex> guard(pool_mutex);
+
+      auto it = map.find(sv);
+      if (MMAP_LIB_UNLIKELY(it != map.end())) { // re-check inside the lock
+        return it->second;
+      }
 
       auto key = key2sv_vector.insert_entry(sv.data(), sv.size());
 
@@ -303,13 +309,32 @@ protected:
     size_ctrl    = (sz << 1) | 1;
     ptr_or_start = 0;
     data_storage = 0;
-    for (auto i = 0u; i < sz; ++i) {
-      uint64_t val = static_cast<unsigned char>(s[i]);
-      if (i < 3) {
+
+    if (sz < 3) {
+      for (auto i = 0u; i < sz; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
         size_ctrl |= val << (8 * (i + 1));
-      } else if (i < 7) {
+      }
+    } else if (sz < 7) {
+      for (auto i = 0u; i < 3; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
+        size_ctrl |= val << (8 * (i + 1));
+      }
+      for (auto i = 3u; i < sz; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
         ptr_or_start |= val << (8 * (i - 3));
-      } else {
+      }
+    } else {
+      for (auto i = 0u; i < 3; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
+        size_ctrl |= val << (8 * (i + 1));
+      }
+      for (auto i = 3u; i < 7; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
+        ptr_or_start |= val << (8 * (i - 3));
+      }
+      for (auto i = 7u; i < sz; ++i) {
+        uint64_t val = static_cast<unsigned char>(s[i]);
         data_storage |= val << (8 * (i - 7));
       }
     }
@@ -511,9 +536,10 @@ public:
   }
 
   str(int64_t v) {
-    auto val_str = std::to_string(v);
-    assert(val_str.size() <= 15);
-    set_sso(val_str.data(), val_str.size());
+    std::array<char, 15> str2;
+    auto [ptr, ec] = std::to_chars(str2.data(), str2.data() + str2.size(), v, 10);
+    (void)ec;
+    set_sso(str2.data(), ptr - str2.data());
   }
 
   // Explicit creators
@@ -813,7 +839,7 @@ public:
     if (is_sso()) {
       int         result = 0;
       const auto *base   = ref_base_sso();
-      if (size() == 0 || !std::isdigit(base[0]))
+      if (empty() || !std::isdigit(base[0]))
         return 0;
       std::from_chars(base, base + size_sso(), result);
       return result;
@@ -822,12 +848,43 @@ public:
     return 0;
   }
 
+  [[nodiscard]] static str from_u64_to_hex(uint64_t v) {
+    std::array<char, 15> str2;
+    auto [ptr, ec] = std::to_chars(str2.data(), str2.data() + str2.size(), v, 16);
+    (void)ec;
+    return str(str2.data(), ptr - str2.data());
+  }
+
+  [[nodiscard]] constexpr int to_u64_from_hex() const {  // convert to integer from hexa
+    if (is_sso()) {
+      int         result = 0;
+      const auto *base   = ref_base_sso();
+      if (empty())
+        return 0;
+      std::from_chars(base, base + size_sso(), result, 16);
+      return result;
+    }
+    assert(false);  // overflow non SSO is a TOO long integer
+    return 0;
+  }
+
+  [[nodiscard]] bool is_string() const {
+    if (size() == 0)
+      return false;
+
+    auto ch = front();
+    if (std::isdigit(ch) || ch == '-')
+      return false;
+
+    return true;
+  }
+
   [[nodiscard]] bool is_i() const {
     if (!is_sso())
       return false;
     int         result;
     const auto *base = ref_base_sso();
-    if (size() == 0 || !std::isdigit(base[0]))
+    if (size() == 0 || !(std::isdigit(base[0]) || base[0] == '-'))
       return false;
     auto [p, ec] = std::from_chars(base, base + size(), result);
     (void)p;

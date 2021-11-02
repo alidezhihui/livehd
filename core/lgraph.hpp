@@ -2,6 +2,7 @@
 #pragma once
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/node_hash_map.h"
 #include "cell.hpp"
 #include "edge.hpp"
 #include "graph_library.hpp"
@@ -15,7 +16,7 @@
 class Lgraph : public Lgraph_Node_Type {
 protected:
   friend class Node;
-  friend class Hierarchy_tree;
+  friend class Hierarchy;
   friend class Node_pin;
   friend class XEdge;
   friend class CFast_edge_iterator;
@@ -27,7 +28,7 @@ protected:
   // Memoize tables that provide hints (not certainty because add/del operations)
   std::array<Index_id, 16> memoize_const_hint;
 
-  Hierarchy_tree htree;
+  Hierarchy htree;
 
   explicit Lgraph(const mmap_lib::str &_path, const mmap_lib::str &_name, Lg_type_id _lgid, Graph_library *_lib);
 
@@ -162,6 +163,17 @@ protected:
 
   void each_hier_unique_sub_bottom_up_int(std::set<Lg_type_id> &visited, const std::function<void(Lgraph *lg_sub)>& fn);
 
+  using Parent_map_type = absl::node_hash_map<Lgraph *, std::vector<Lgraph *>>;
+  using Pending_map     = absl::flat_hash_map<Lgraph *, int>;
+
+  void bottom_up_visit_wrap(const std::function<void(Lgraph *lg_sub)> *fn
+                           ,      Pending_map                         *pending_map
+                           ,const Parent_map_type                     *parent_map);
+
+  void bottom_up_visit_step(Pending_map                   &pending_map
+                           ,Parent_map_type               &parent_map
+                           ,absl::flat_hash_set<Lgraph *> &leafs_set
+                           ,std::vector<Lgraph *>         &leafs);
 public:
   Lgraph()               = delete;
   Lgraph(const Lgraph &) = delete;
@@ -170,21 +182,8 @@ public:
 
   bool is_empty() const { return fast_first() == 0; }
 
-  void regenerate_htree() {
-    htree.clear();
-    htree.regenerate();
-  }
-
-  Hierarchy_tree *ref_htree() {
-    if (htree.empty())
-      htree.regenerate();
-    return &htree;
-  }
-  const Hierarchy_tree &get_htree() {
-    if (htree.empty())
-      htree.regenerate();
-    return htree;
-  }
+  Hierarchy *ref_htree() { return &htree; }
+  const Hierarchy &get_htree() { return htree; }
 
   void add_edge(const Node_pin &dpin, const Node_pin &spin);
   void add_edge(const Node_pin &dpin, const Node_pin &spin, uint32_t bits) {
@@ -207,8 +206,8 @@ public:
   void clear() override;
   void sync() override;
 
-  Node_pin add_graph_input(const mmap_lib::str &str, Port_ID pos, uint32_t bits);
-  Node_pin add_graph_output(const mmap_lib::str &str, Port_ID pos, uint32_t bits);
+  Node_pin add_graph_input(const mmap_lib::str str, Port_ID pos, uint32_t bits);
+  Node_pin add_graph_output(const mmap_lib::str str, Port_ID pos, uint32_t bits);
 
   Node create_node();
 
@@ -250,13 +249,14 @@ public:
   void each_graph_input(const std::function<void(Node_pin &pin)>& f1, bool hierarchical = false);
   void each_graph_output(const std::function<void(Node_pin &pin)>& f1, bool hierarchical = false);
 
-  void each_hier_fast(const std::function<bool(Node &)>&);
+  //void each_hier_fast(const std::function<bool(Node &)>&);
 
   void each_local_sub_fast_direct(const std::function<bool(Node &, Lg_type_id)>&);
 
   void each_local_unique_sub_fast(const std::function<bool(Lgraph *lg_sub)>& fn);
   void each_hier_unique_sub_bottom_up(const std::function<void(Lgraph *lg_sub)>& fn);
-  void each_hier_unique_sub_bottom_up_parallel(const std::function<void(Lgraph *lg_sub)>& fn);
+
+  void each_hier_unique_sub_bottom_up_parallel2(const std::function<void(Lgraph *lg_sub)>& fn);
 
   template <typename FN>
   void each_local_sub_fast(const FN f1) {

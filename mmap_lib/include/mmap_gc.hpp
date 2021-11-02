@@ -55,8 +55,8 @@ protected:
   static inline int n_open_mmaps = 0;
   static inline int n_open_fds   = 0;
 
-  static inline int n_max_mmaps = 500;
-  static inline int n_max_fds   = 500;
+  static inline int n_max_mmaps = 4000;
+  static inline int n_max_fds   = 900;
 
   static void recycle_older() {
     // Recycle around 1/2 of the newer open fds with mmap
@@ -236,7 +236,7 @@ protected:
       exit(-3);
     }
     /* LCOV_EXCL_STOP */
-    if (s.st_size <= static_cast<int>(size)) {
+    if (s.st_size < static_cast<int>(size)) {
       int ret = ::ftruncate(fd, size);
       /* LCOV_EXCL_START */
       if (ret < 0) {
@@ -249,7 +249,7 @@ protected:
       size = s.st_size;
     }
 
-    void *base = ::mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);  // no superpages
+    void *base = ::mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NONBLOCK, fd, 0);  // no superpages
     // allowed to fail: step called again if needed
 
     return {base, size};
@@ -339,11 +339,14 @@ public:
   // std::bind(&map<MaxLoadFactor100, Key, T, Hash>::gc_function, this, std::placeholders::_1));
   static std::tuple<void *, size_t> mmap(std::string_view name, int fd, size_t size,
                                          std::function<bool(void *, bool)> gc_function) {
-    std::lock_guard<std::mutex> guard(lgs_mutex);
 
+    //std::cerr << "mmap_lib::mmap " << size / 1024 << "KBs for " << name << std::endl;
     auto [base, final_size] = mmap_step(name, fd, size);
     if (base == MAP_FAILED) {
-      try_collect_mmap_int();
+      {
+        std::lock_guard<std::mutex> guard(lgs_mutex);
+        try_collect_mmap_int();
+      }
       std::tie(base, final_size) = mmap_step(name, fd, size);
       /* LCOV_EXCL_START */
       if (base == MAP_FAILED) {
@@ -352,6 +355,7 @@ public:
       }
       /* LCOV_EXCL_STOP */
     }
+    std::lock_guard<std::mutex> guard(lgs_mutex);
     n_open_mmaps++;
 
     mmap_gc_entry entry;

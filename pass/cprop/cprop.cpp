@@ -1231,9 +1231,9 @@ bool Cprop::tuple_tuple_get(const Node &node) {
       }
     }
     if (!tuple_issues) {
-      Pass::error("tuple_get {} for tuple {} has no way to find field", node.debug_name(), tup_name);
       node_tup->set_issue();  // It is not right
       tuple_issues = true;
+      Pass::error("tuple_get {} for tuple {} has no way to find field", node.debug_name(), tup_name);
     }
     return false;
   }
@@ -1514,7 +1514,15 @@ void Cprop::reconnect_sub_as_cell(Node &node, Ntype_op cell_ntype) {
 
   I(cell_ntype != Ntype_op::Sub);  // structural is not allowed with subs
   if (cell_ntype == Ntype_op::Memory) {
-    connect_clock_pin_if_needed(node);
+    auto type_dpin = tup->get_dpin("type");
+
+    if (type_dpin.is_invalid()) {
+      connect_clock_pin_if_needed(node);
+    }else{
+      auto v = type_dpin.get_node().get_type_const().to_i();
+      if (v != 2)
+        connect_clock_pin_if_needed(node);
+    }
     // memories should have the outputs already connected
   } else {
     auto sink_list = node.out_sinks();
@@ -1681,7 +1689,10 @@ void Cprop::reconnect_tuple_sub(Node &node) {
 
     // only punch inputs (clock, resetxxx, foo, but not outputs)
     auto *lg = node.get_class_lgraph();
+
+#ifndef NDEBUG
     Pass::info("instance {} has unconnected {}. Punching through lgraph {}", node.debug_name(), io_pins[pid].name, lg->get_name());
+#endif
 
     I(io_pins[pid].is_input());
     Node_pin dpin;
@@ -2126,7 +2137,7 @@ void Cprop::clean_io(Lgraph *lg) {
 }
 
 void Cprop::do_trans(Lgraph *lg) {
-  Lbench b("pass.cprop");
+  Lbench b("pass.cprop." + lg->get_name().to_s());
 
   scalar_pass(lg);
   tuple_pass(lg);
@@ -2171,14 +2182,9 @@ void Cprop::try_create_graph_output(Node &node, const std::shared_ptr<Lgtuple co
       continue;
     }
 
-    Port_ID x   = Port_invalid;
-    auto    pos = Lgtuple::get_first_level_pos(out_name);
-    if (pos >= 0) {
-      x = pos;
-    }
-    auto flattened_gout = lg->add_graph_output(out_name, x, 0);
+		auto [io_pos, no_pos_name] = Lgtuple::convert_key_to_io(out_name);
+    auto flattened_gout = lg->add_graph_output(no_pos_name, io_pos, 0);
     it.second.connect_sink(flattened_gout);
-    I(!lg->get_graph_output(out_name).is_invalid());
   }
 
   if (!local_error) {

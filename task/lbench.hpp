@@ -44,25 +44,40 @@ private:
   pid_t              perf_pid     = 0;
 
 protected:
+#ifdef __x86_64__
+  using Time_Point=uint64_t;
+#else
   typedef std::chrono::time_point<std::chrono::system_clock> Time_Point;
+#endif
+
   struct Time_Sample {
     Time_Point  tp;
-    int         mem;
     size_t      ninst;
     size_t      ncycles;
     size_t      nbr_misses;
-    size_t      nmem_misses;
     std::string name;
   };
   std::vector<Time_Sample> record;
   const std::string        sample_name;
   static inline Time_Point global_start_time;
   Time_Point               start_time;
-  int                      start_mem;
   bool                     end_called;
 
   void perf_start(const std::string &name);
   void perf_stop();
+
+#ifdef __x86_64__
+  uint64_t get_cycles() const {
+    unsigned int lo;
+    unsigned int hi;
+    __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+    return (((uint64_t)hi << 32) | lo)>>10; // >>10 to decrease size /1K
+  }
+#else
+  Time_Point get_cycles() const {
+    return std::chrono::system_clock::now();
+  }
+#endif
 
 public:
   explicit Lbench(const std::string &name) : sample_name(name) {
@@ -70,7 +85,7 @@ public:
     perf_start(name);
 
     const std::vector<int> evts{
-#ifdef __linux__
+#if 0
         PERF_COUNT_HW_CPU_CYCLES,
         PERF_COUNT_HW_INSTRUCTIONS,
         PERF_COUNT_HW_BRANCH_MISSES,
@@ -87,6 +102,7 @@ public:
       return;
     end();
     perf_stop();
+    linux.close();
   }
 
   void start();
@@ -94,5 +110,6 @@ public:
   double get_secs() const;
 
   void end();
+  static inline int tfd = -1;
 };
 

@@ -14,7 +14,7 @@
 #include <type_traits>
 #include <vector>
 
-//#define MPMC
+#define MPMC
 #ifdef MPMC
 #include "mpmc.hpp"
 #else
@@ -24,22 +24,43 @@
 #include "lbench.hpp"
 
 // #define DISABLE_THREAD_POOL
+//
+//
 
-template <class Func, class... Args>
-inline auto forward_as_lambda(Func &&func, Args &&...args) {
+
+template <typename Func, typename... Args>
+static auto forward_as_lambda(Func &&func, Args &&...args) {
+//  -> std::enable_if_t<std::is_void_v<std::result_of<Func>::type>, int> {
+  return [
+    f   = std::forward<decltype(func)>(func),
+    args = std::make_tuple(std::forward<Args>(args) ...)
+  ]() mutable {
+    return std::apply(std::move(f), std::move(args));
+  };
+#if 0
   return [f   = std::forward<decltype(func)>(func),
           tup = std::tuple<std::conditional_t<std::is_lvalue_reference_v<Args>, Args, std::remove_reference_t<Args>>...>(
               std::forward<decltype(args)>(args)...)]() mutable { return std::apply(std::move(f), std::move(tup)); };
+#endif
 }
 
 template <class Func, class T, class... Args>
 inline auto forward_as_lambda2(Func &&func, T &&first, Args &&...args) {
+  return [
+    f   = std::forward<decltype(func)>(func),
+    tt  = std::forward<decltype(first)>(first),
+    args = std::make_tuple(std::forward<Args>(args) ...)
+  ]() mutable {
+    return std::apply(std::move(f), std::tuple_cat(std::forward_as_tuple(tt), std::move(args)));
+  };
+#if 0
   return [f   = std::forward<decltype(func)>(func),
           tt  = std::forward<decltype(first)>(first),
           tup = std::tuple<std::conditional_t<std::is_lvalue_reference_v<Args>, Args, std::remove_reference_t<Args>>...>(
               std::forward<decltype(args)>(args)...)]() mutable {
     return std::apply(std::move(f), std::tuple_cat(std::forward_as_tuple(tt), std::move(tup)));
   };
+#endif
 }
 
 class Thread_pool {
@@ -63,6 +84,8 @@ class Thread_pool {
 
   std::condition_variable job_available_var;
   std::mutex              queue_mutex;
+
+  int env_threads;
 
   void task() {
     task_id = ++task_id_count;
@@ -100,40 +123,58 @@ class Thread_pool {
   }
 
   void add_(const std::function<void(void)> &job) {
-#ifdef DISABLE_THREAD_POOL
-    job();
-    return;
-#else
-    if (jobs_left > 48) {  // FIXME->sh: what if not so much core?
+    if(env_threads == 1) {
       job();
       return;
+    } else { // not specify $LIVEHD_THREADS at all -> run with full threads resources
+      if (jobs_left > 48) {
+        job();
+        return;
+      }
+      jobs_left.fetch_add(1, std::memory_order_relaxed);
+      queue.enqueue(job);
+      job_available_var.notify_one();
     }
-    jobs_left.fetch_add(1, std::memory_order_relaxed);
-    queue.enqueue(job);
-    job_available_var.notify_one();
-#endif
+// To be deprecated
+// #ifdef DISABLE_THREAD_POOL
+//     job();
+//     return;
+// #else
+//     if (jobs_left > 48) {  // FIXME->sh: what if not so much core?
+//       job();
+//       return;
+//     }
+//     jobs_left.fetch_add(1, std::memory_order_relaxed);
+//     queue.enqueue(job);
+//     job_available_var.notify_one();
+// #endif
   }
 
 public:
-  Thread_pool(int _thread_count = 0)
-      :
+  Thread_pool(int _thread_count = 0):
 #ifdef MPMC
-      queue(256)
-      ,
+      queue(256),
 #endif
-      jobs_left(0)
-      , finishing(false) {
+      jobs_left(0), finishing(false) {
 
     started_lock = false;
 
     thread_count = _thread_count;
     size_t lim   = (std::thread::hardware_concurrency() - 1);  // -1 for calling thread
+    // char  *foo = getenv("LIVEHD_THREADS");
+    if (getenv("LIVEHD_THREADS") != nullptr) {
+      // clangd complains "not thread safe", but it's ok as only construct thread_pool once
+      env_threads = atoi(getenv("LIVEHD_THREADS"));
+    } else {
+      // use max threads resources
+      env_threads = -1;
+    }
 
     if (thread_count > lim || thread_count == 0) {
-      auto *var = getenv("LIVEHD_THREADS");
-      if (var) {
-        lim = atoi(var);
-        printf("LIVEHD_THREADS set to %ld\n", lim);
+      if (env_threads != -1) {
+        // LiveHD default has one top thread, so env variable LiveHD_THREADS has to -1 for semantic matching
+        lim = env_threads - 1;
+        printf("LIVEHD_THREADS set to %ld\n", lim + 1);
       }
       thread_count = lim;
     }
@@ -165,13 +206,16 @@ public:
 
   inline unsigned size() const { return thread_count; }
 
-  template <class Func, class... Args>
+  template <typename Func, typename... Args, std::enable_if_t<std::is_invocable_v<Func &&, Args &&...>, int> = 0>
+  //template <typename Func, typename... Args, std::enable_if_t<std::is_void_v<Func>, int> = 0>
   void add(Func &&func, Args &&...args) {
     return add_(forward_as_lambda(std::forward<decltype(func)>(func), std::forward<decltype(args)>(args)...));
   }
-#if 1
-  template <class Func, class T, class... Args>
+#if 0
+  template <typename Func, class T, typename... Args, std::enable_if_t<std::is_invocable_v<Func &&, Args &&...>, int> = 0>
   void add(Func &&func, T *first, Args &&...args) {
+    static_assert(std::is_member_pointer<Func>::value);
+    static_assert(std::is_member_function_pointer<Func>::value, "Pass a function pointer. E.g add(&Class::fun, &addr_class, arg1)");
     return add_(forward_as_lambda2(std::forward<decltype(func)>(func),
                                    std::forward<decltype(first)>(first),
                                    std::forward<decltype(args)>(args)...));
@@ -185,10 +229,10 @@ public:
       if (has_work) {
         res();
         jobs_left.fetch_sub(1, std::memory_order_relaxed);
-      } else {
-        Lbench b("waiting");
-        while (jobs_left > 0)
-          ;
+      /* } else { */
+      /*   Lbench b("waiting"); */
+      /*   while (jobs_left > 0) */
+      /*     ; */
       }
     }
   }

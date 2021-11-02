@@ -14,8 +14,22 @@
 Bitwidth::Bitwidth(bool _hier, int _max_iterations) : max_iterations(_max_iterations), hier(_hier) {}
 
 void Bitwidth::do_trans(Lgraph *lg) {
-  Lbench b("pass.bitwidth");
+  Lbench b("pass.bitwidth." + lg->get_name().to_s());
   bw_pass(lg);
+}
+
+void Bitwidth::set_bw_1bit(Node_pin &dpin) {
+  Bitwidth_range bw;
+  bw.set_sbits_range(1);
+  dpin.set_bits(1);
+  bwmap.insert_or_assign(dpin.get_compact_class(), bw);
+}
+
+void Bitwidth::set_bw_1bit(Node_pin &&dpin) {
+  Bitwidth_range bw;
+  bw.set_sbits_range(1);
+  dpin.set_bits(1);
+  bwmap.insert_or_assign(dpin.get_compact_class(), bw);
 }
 
 void Bitwidth::adjust_bw(Node_pin &&dpin, const Bitwidth_range &bw) {
@@ -126,9 +140,7 @@ void Bitwidth::process_flop(Node &node) {
 void Bitwidth::process_ror(Node &node, XEdge_iterator &inp_edges) {
   I(inp_edges.size());
 
-  Bitwidth_range bw;
-  bw.set_sbits_range(1);  // no need adjust_bw. Always 1
-  bwmap.insert_or_assign(node.get_driver_pin().get_compact_class(), bw);
+  set_bw_1bit(node.get_driver_pin());
 }
 
 void Bitwidth::process_not(Node &node, XEdge_iterator &inp_edges) {
@@ -311,14 +323,12 @@ void Bitwidth::process_memory(Node &node) {
   std::vector<Node_pin> din_drivers;
   std::vector<Node_pin> addr_drivers;
   {
-    for (const auto &e : node.inp_edges_ordered()) {
+    for (auto &e : node.inp_edges_ordered()) {
       auto n = e.sink.get_pin_name();
       if (n == "clock") {
         auto it = bwmap.find(e.driver.get_compact_class());
         if (it == bwmap.end()) {
-          Bitwidth_range clock_bw;
-          clock_bw.set_sbits_range(1);
-          bwmap.insert_or_assign(e.driver.get_compact_class(), clock_bw);
+          set_bw_1bit(e.driver);
 
           discovered_some_backward_nodes_try_again = true;
         }
@@ -652,6 +662,8 @@ void Bitwidth::process_get_mask(Node &node) {
 
   const Lconst val     = it->second.get_max().get_mask_op(mask_min);
   Lconst       min_val = val;
+  if (it->second.get_max()>0 && it->second.get_min()<0)
+    min_val = 0;
   Lconst       max_val = val;
 
   Lconst val2 = it->second.get_max().get_mask_op(mask_max);
@@ -683,14 +695,14 @@ void Bitwidth::process_sext(Node &node, XEdge_iterator &inp_edges) {
   I(inp_edges[0].sink.get_pin_name() == "a");
   I(inp_edges[1].sink.get_pin_name() == "b");
 
-  auto wire_it = bwmap.find(wire_dpin.get_compact_class());
+  bool no_wire = !bwmap.contains(wire_dpin.get_compact_class());
 
   auto sign_max = Bits_max;
   if (pos_dpin.is_type_const()) {
     sign_max = pos_dpin.get_type_const().to_i();
   }
 
-  if (sign_max == Bits_max && wire_it == bwmap.end()) {
+  if (sign_max == Bits_max && no_wire) {
     debug_unconstrained_msg(node, pos_dpin);
     not_finished = true;
     return;
@@ -700,9 +712,10 @@ void Bitwidth::process_sext(Node &node, XEdge_iterator &inp_edges) {
   bw.set_sbits_range(sign_max);
   adjust_bw(node.get_driver_pin(), bw);
 
-  if (hier || not_finished || wire_it == bwmap.end())
+  if (hier || not_finished || no_wire)
     return;
 
+  auto wire_it = bwmap.find(wire_dpin.get_compact_class());
   {
     auto b = wire_it->second.get_sbits();
     if (b <= sign_max) {  // sext is useless
@@ -754,9 +767,7 @@ void Bitwidth::process_sext(Node &node, XEdge_iterator &inp_edges) {
 }
 
 void Bitwidth::process_comparator(Node &node) {
-  Bitwidth_range bw;
-  bw.set_sbits_range(1);
-  bwmap.insert_or_assign(node.get_driver_pin().get_compact_class(), bw);
+  set_bw_1bit(node.get_driver_pin());
 }
 
 void Bitwidth::process_assignment_or(Node &node, XEdge_iterator &inp_edges) {
@@ -1287,7 +1298,8 @@ void Bitwidth::debug_unconstrained_msg(Node &node, Node_pin &dpin) {
 
 void Bitwidth::bw_pass(Lgraph *lg) {
   discovered_some_backward_nodes_try_again = true;
-  not_finished                             = true;
+  // not_finished                             = true;
+  not_finished                             = false;
 
   int n_iterations = 0;
 

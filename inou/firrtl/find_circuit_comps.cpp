@@ -25,12 +25,16 @@ void Inou_firrtl::SearchNode(Lnast &ln, const Lnast_nid &parent_node, firrtl::Fi
     return;
   } else if (ntype.is_ref()) {
     CheckRefForComp(ln, parent_node, umod);
+#if 0
   } else if (ntype.is_tuple()) {
     CheckTuple(ln, parent_node, umod);
+#endif
   } else if (ntype.is_func_call()) {
     CreateSubmodInst(ln, parent_node, umod);
+#if 0
   } else if (ntype.is_select()) {
     return;
+#endif
   } else {
     // If "regular" node
     for (const auto &lnidx : ln.children(parent_node)) {
@@ -189,7 +193,7 @@ void Inou_firrtl::HandleMemTup(Lnast &ln, const Lnast_nid &tup_node, firrtl::Fir
         auto attr_str = ln.get_name(lhs_asg);
         if (attr_str == "__posedge") {
           Pass::warn("attribute __posedge used for a memory port tuple, but only posedge=true is supported in FIRRTL");
-        } else if (attr_str == "__latency") {
+        } else if (attr_str == "__type") { // 0: async, 1:sync, 2:array
           // based on port_type, help determine read_lat and write_lat
         } else if (attr_str == "__fwd") {
           // help determine memory statement's read_under_write policy

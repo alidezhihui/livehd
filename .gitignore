@@ -30,3 +30,7 @@ lbench.trace
 *.dot.pdf
 docs/graph-images
 *floorplan.*
+node_modules
+coverage
+.vscode
+package-lock.json

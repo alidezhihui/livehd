@@ -469,7 +469,7 @@ std::pair<Port_ID, mmap_lib::str> Lgtuple::convert_key_to_io(const mmap_lib::str
     return std::pair(Port_invalid, key.substr(skip));
   }
 
-  auto key2 = key.substr(skip);
+  auto key2 = key.substr(skip+1);
 
   if (!std::isdigit(key2.front())) {
     Lgraph::error("name should have digit after position specified :digits: not {}\n", key2);
@@ -491,6 +491,9 @@ mmap_lib::str Lgtuple::get_all_but_first_level(const mmap_lib::str &key) {
   if (n != std::string::npos) {
     return key.substr(n + 1);
   }
+
+	if (key.front() == '$' || key.front() == '%' || key.front() == '#')
+		return key.substr(1);
 
   return mmap_lib::str("");  // empty if no dot left
 }
@@ -1680,8 +1683,8 @@ bool Lgtuple::has_just_attributes() const {
 }
 
 void Lgtuple::dump() const {
-  fmt::print("tuple_name: {}{}\n", name, correct ? "" : " ISSUES");
+  fmt::print("tuple_name:{} {}\n", name, correct ? "" : " ISSUES");
   for (const auto &it : key_map) {
-    fmt::print("  key: {} dpin: {}\n", it.first, it.second.debug_name());
+    fmt::print("  key:{} dpin:{}\n", it.first, it.second.debug_name());
   }
 }
